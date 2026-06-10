@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SemanticKernel"                        Version="1.30.0" />
+    <PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.30.0" />
+    <PackageReference Include="Azure.AI.OpenAI"                                 Version="2.1.0" />
+    <PackageReference Include="Azure.Search.Documents"                          Version="11.6.0" />
+    <!-- TTS -->
+    <PackageReference Include="Microsoft.CognitiveServices.Speech"              Version="1.41.0" />
+    <!-- Video / FFmpeg -->
+    <PackageReference Include="FFMpegCore"                                      Version="5.1.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AIYouTubeFactory.Core\AIYouTubeFactory.Core.csproj" />
+  </ItemGroup>
+</Project>

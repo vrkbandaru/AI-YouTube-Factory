@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AIYouTubeFactory.API</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SemanticKernel"                          Version="1.30.0" />
+    <PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI"   Version="1.30.0" />
+    <PackageReference Include="Azure.AI.OpenAI"                                   Version="2.1.0" />
+    <PackageReference Include="Azure.Search.Documents"                            Version="11.6.0" />
+    <PackageReference Include="Microsoft.CognitiveServices.Speech"                Version="1.41.0" />
+    <PackageReference Include="FFMpegCore"                                        Version="5.1.0" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR"                      Version="1.1.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore"                            Version="6.9.0" />
+    <PackageReference Include="Serilog.AspNetCore"                                Version="8.0.3" />
+    <PackageReference Include="Serilog.Sinks.Console"                             Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File"                                Version="6.0.0" />
+    <PackageReference Include="DocumentFormat.OpenXml"                            Version="3.1.0" />
+    <PackageReference Include="PdfPig"                                            Version="0.1.9" />
+    <PackageReference Include="Markdig"                                           Version="0.37.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AIYouTubeFactory.Core\AIYouTubeFactory.Core.csproj" />
+    <ProjectReference Include="..\AIYouTubeFactory.Infrastructure\AIYouTubeFactory.Infrastructure.csproj" />
+    <ProjectReference Include="..\AIYouTubeFactory.Agents\AIYouTubeFactory.Agents.csproj" />
+  </ItemGroup>
+</Project>

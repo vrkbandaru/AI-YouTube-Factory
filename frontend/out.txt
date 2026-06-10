@@ -1,0 +1,9 @@
+Initial chunk files   | Names         |  Raw size | Estimated transfer size
+main-EXUJ7NOQ.js      | main          | 950.27 kB |               192.70 kB
+styles-WZYDHC2G.css   | styles        |  85.86 kB |                 8.19 kB
+polyfills-FFHMD2TL.js | polyfills     |  33.71 kB |                11.02 kB
+
+                      | Initial total |   1.04 MB |               211.91 kB
+
+Application bundle generation failed. [4.724 seconds]
+

@@ -1,0 +1,19 @@
+version: '3.9'
+
+# Local development overrides — mounts source for hot reload
+services:
+
+  api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - DOTNET_USE_POLLING_FILE_WATCHER=1
+    volumes:
+      - ./backend:/src
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+    command: dotnet watch run --project src/AIYouTubeFactory.API/AIYouTubeFactory.API.csproj
+
+  frontend:
+    # In local dev, run Angular dev server directly (npm start)
+    # and comment out the frontend service in docker-compose.yml
+    profiles:
+      - donotstart
