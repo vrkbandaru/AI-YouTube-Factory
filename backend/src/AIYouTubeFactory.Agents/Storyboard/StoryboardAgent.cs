@@ -15,7 +15,7 @@ public class StoryboardAgent : IStoryboardAgent
         _kernel = kernel;
     }
 
-    public async Task<AIYouTubeFactory.Core.Models.Storyboard> GenerateStoryboardAsync(
+    public async Task<Storyboard> GenerateStoryboardAsync(
         YouTubeVideoScript script,
         IProgress<VideoProgressUpdate>? progress = null)
     {
@@ -75,7 +75,7 @@ Rules:
         try
         {
             var json       = ExtractJson(result.ToString());
-            var storyboard = JsonSerializer.Deserialize<AIYouTubeFactory.Core.Models.Storyboard>(json,
+            var storyboard = JsonSerializer.Deserialize<Storyboard>(json,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                 ?? BuildFallbackStoryboard(script);
 
@@ -110,14 +110,14 @@ Rules:
         return string.Join("\n\n", parts);
     }
 
-    private static AIYouTubeFactory.Core.Models.Storyboard BuildFallbackStoryboard(YouTubeVideoScript script)
+    private static Storyboard BuildFallbackStoryboard(YouTubeVideoScript script)
     {
-        var scenes = new List<AIYouTubeFactory.Core.Models.StoryboardScene>();
+        var scenes = new List<StoryboardScene>();
         int idx    = 1;
 
         void AddScene(string title, string narration, string imgHint, int secs)
         {
-            scenes.Add(new AIYouTubeFactory.Core.Models.StoryboardScene
+            scenes.Add(new StoryboardScene
             {
                 Index           = idx++,
                 Title           = title,
@@ -137,7 +137,7 @@ Rules:
         AddScene("Call to Action", script.CallToAction, "subscribe button, thumbs up, social media", 15);
         AddScene("Outro",          script.Outro,         $"outro screen for {script.Title}", 10);
 
-        return new AIYouTubeFactory.Core.Models.Storyboard
+        return new Storyboard
         {
             VideoTitle             = script.Title,
             Scenes                 = scenes,

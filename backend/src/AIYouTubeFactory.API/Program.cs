@@ -101,7 +101,7 @@ builder.Services.AddScoped<IVideoPlannerAgent, VideoPlannerAgent>();
 builder.Services.AddScoped<ISocialMediaAgent,  SocialMediaAgent>();
 
 // ── Video Pipeline Agents ─────────────────────────────────────────────────────
-builder.Services.AddScoped<IStoryboardAgent, AIYouTubeFactory.Agents.Storyboards.StoryboardAgent>();
+builder.Services.AddScoped<IStoryboardAgent, StoryboardAgent>();
 
 // Fix 2: ImageAgent uses generic REST — works with MAI-Image-2.5, dall-e-3, etc.
 builder.Services.AddScoped<IImageAgent>(_ =>
@@ -191,5 +191,5 @@ app.MapHealthChecks("/health");
 
 app.Run();
 
-// Expose implicit Program class for integration tests
+// Required for WebApplicationFactory<Program> in integration tests
 public partial class Program { }

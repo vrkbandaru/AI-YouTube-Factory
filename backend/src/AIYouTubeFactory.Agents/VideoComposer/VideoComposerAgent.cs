@@ -15,63 +15,81 @@ public class VideoComposerAgent : IVideoComposerAgent
         { VideoResolution.UHD4K,   (3840, 2160) }
     };
 
-    private readonly string _ffmpegBinaryFolder;
+    // ── Store the FULL PATH to ffmpeg.exe and ffprobe.exe ─────────────────────
+    private readonly string _ffmpegExe;
+    private readonly string _ffprobeExe;
 
     public VideoComposerAgent(string ffmpegBinaryFolder = "")
     {
-        _ffmpegBinaryFolder = ffmpegBinaryFolder;
-        ConfigureFFmpeg(ffmpegBinaryFolder);
+        var folder  = ResolveFFmpegFolder(ffmpegBinaryFolder);
+        _ffmpegExe  = string.IsNullOrEmpty(folder) ? "ffmpeg"  : Path.Combine(folder, "ffmpeg.exe");
+        _ffprobeExe = string.IsNullOrEmpty(folder) ? "ffprobe" : Path.Combine(folder, "ffprobe.exe");
+
+        // Tell FFMpegCore where the binaries are
+        if (!string.IsNullOrEmpty(folder))
+            GlobalFFOptions.Configure(o => o.BinaryFolder = folder);
+
+        Console.WriteLine($"[VideoComposer] Using ffmpeg: {_ffmpegExe}");
+        Console.WriteLine($"[VideoComposer] ffmpeg.exe exists: {File.Exists(_ffmpegExe)}");
     }
 
-    // ── Fix 1: Robust FFmpeg path configuration ───────────────────────────────
-    private static void ConfigureFFmpeg(string binaryFolder)
+    // ── Resolve full ffmpeg folder using multiple strategies ──────────────────
+    private static string ResolveFFmpegFolder(string configuredPath)
     {
-        // Priority 1: explicitly configured folder
-        if (!string.IsNullOrWhiteSpace(binaryFolder) && Directory.Exists(binaryFolder))
+        // Strategy 1: Explicitly configured path — check ffmpeg.exe is actually there
+        if (!string.IsNullOrWhiteSpace(configuredPath))
         {
-            GlobalFFOptions.Configure(o => o.BinaryFolder = binaryFolder);
-            return;
+            var exePath = Path.Combine(configuredPath, "ffmpeg.exe");
+            if (File.Exists(exePath))
+            {
+                Console.WriteLine($"[VideoComposer] FFmpeg found at configured path: {exePath}");
+                return configuredPath;
+            }
+            Console.WriteLine($"[VideoComposer] WARNING: ffmpeg.exe NOT at: {exePath}");
         }
 
-        // Priority 2: check common Windows WinGet install paths
-        var wingetBases = new[]
-        {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Microsoft", "WinGet", "Packages"),
-            @"C:\ProgramData\Microsoft\Windows\AppV\Client\Packages"
-        };
+        // Strategy 2: Auto-scan WinGet packages folder
+        var localAppData    = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var wingetPackages  = Path.Combine(localAppData, "Microsoft", "WinGet", "Packages");
 
-        foreach (var baseDir in wingetBases.Where(Directory.Exists))
+        if (Directory.Exists(wingetPackages))
         {
-            var ffmpegDir = Directory.GetDirectories(baseDir, "Gyan.FFmpeg*", SearchOption.TopDirectoryOnly)
-                .SelectMany(d => Directory.GetDirectories(d, "*full_build*", SearchOption.AllDirectories))
+            var found = Directory
+                .GetDirectories(wingetPackages, "Gyan.FFmpeg*", SearchOption.TopDirectoryOnly)
+                .SelectMany(d => Directory.GetDirectories(d, "*build*", SearchOption.AllDirectories))
                 .Select(d => Path.Combine(d, "bin"))
-                .FirstOrDefault(Directory.Exists);
+                .FirstOrDefault(d => File.Exists(Path.Combine(d, "ffmpeg.exe")));
 
-            if (ffmpegDir != null)
+            if (found != null)
             {
-                GlobalFFOptions.Configure(o => o.BinaryFolder = ffmpegDir);
-                return;
+                Console.WriteLine($"[VideoComposer] FFmpeg auto-discovered (WinGet): {found}");
+                return found;
             }
         }
 
-        // Priority 3: common manual install paths
-        var commonPaths = new[]
+        // Strategy 3: Common manual install locations
+        var candidates = new[]
         {
             @"C:\ffmpeg\bin",
             @"C:\ffmpeg\ffmpeg\bin",
             @"C:\Program Files\ffmpeg\bin",
+            @"C:\Program Files (x86)\ffmpeg\bin",
             @"C:\Tools\ffmpeg\bin",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "ffmpeg", "bin"),
         };
 
-        foreach (var p in commonPaths.Where(Directory.Exists))
+        foreach (var path in candidates)
         {
-            GlobalFFOptions.Configure(o => o.BinaryFolder = p);
-            return;
+            if (File.Exists(Path.Combine(path, "ffmpeg.exe")))
+            {
+                Console.WriteLine($"[VideoComposer] FFmpeg found at candidate: {path}");
+                return path;
+            }
         }
 
-        // Priority 4: rely on system PATH (ffmpeg installed globally)
-        // GlobalFFOptions stays default — FFMpegCore will search PATH
+        // Strategy 4: Rely on system PATH
+        Console.WriteLine("[VideoComposer] FFmpeg not found locally — using system PATH");
+        return string.Empty;
     }
 
     public async Task<GeneratedVideo> ComposeVideoAsync(
@@ -82,6 +100,8 @@ public class VideoComposerAgent : IVideoComposerAgent
         VideoResolution resolution,
         IProgress<VideoProgressUpdate>? progress = null)
     {
+        // Ensure outputDir is absolute to avoid ffmpeg resolving relative paths incorrectly
+        outputDir = Path.GetFullPath(outputDir);
         Directory.CreateDirectory(outputDir);
         var (width, height) = Resolutions[resolution];
         var safeTitle  = SanitizeFileName(storyboard.VideoTitle);
@@ -89,24 +109,31 @@ public class VideoComposerAgent : IVideoComposerAgent
         var tempDir    = Path.Combine(outputDir, "temp");
         Directory.CreateDirectory(tempDir);
 
-        // ── Verify FFmpeg is accessible before starting ───────────────────────
-        if (!await IsFFmpegAvailableAsync())
+        // ── Verify ffmpeg.exe is accessible ──────────────────────────────────
+        var (isAvailable, ffmpegVersion) = await CheckFFmpegAsync();
+        if (!isAvailable)
         {
+            var msg = _ffmpegExe == "ffmpeg"
+                ? "FFmpeg not found on system PATH. Install FFmpeg and add it to PATH, " +
+                  "or set FFmpeg:BinaryFolder in appsettings.Development.json."
+                : $"FFmpeg executable not found at: {_ffmpegExe}\n" +
+                  $"Please verify the path in appsettings.Development.json → FFmpeg:BinaryFolder.\n" +
+                  $"Current value: '{Path.GetDirectoryName(_ffmpegExe)}'";
+
             return new GeneratedVideo
             {
                 Title        = storyboard.VideoTitle,
                 Status       = VideoGenerationStatus.Failed,
-                ErrorMessage = "FFmpeg executable not found. " +
-                               "Please verify the path in appsettings.Development.json → FFmpeg:BinaryFolder. " +
-                               $"Configured path: '{_ffmpegBinaryFolder}'. " +
-                               "Also try running 'ffmpeg -version' in a new terminal to confirm it works."
+                ErrorMessage = msg
             };
         }
+
+        Console.WriteLine($"[VideoComposer] FFmpeg OK: {ffmpegVersion}");
 
         progress?.Report(new VideoProgressUpdate
         {
             Stage           = "Video Composer",
-            Message         = $"🎬 Composing {storyboard.Scenes.Count} scenes → {width}×{height} MP4...",
+            Message         = $"🎬 Composing {storyboard.Scenes.Count} scenes → {width}×{height}...",
             ProgressPercent = 66,
             Status          = VideoGenerationStatus.ComposingVideo
         });
@@ -130,24 +157,23 @@ public class VideoComposerAgent : IVideoComposerAgent
                     Status          = VideoGenerationStatus.ComposingVideo
                 });
 
-                var success = await ComposeSceneClipAsync(
-                    scene, segment, clipPath, width, height);
+                var success = await ComposeSceneClipAsync(scene, segment, clipPath, width, height);
 
                 if (success && File.Exists(clipPath) && new FileInfo(clipPath).Length > 0)
                     sceneClips.Add(clipPath);
                 else
                     progress?.Report(new VideoProgressUpdate
                     {
-                        Stage   = "Video Composer",
-                        Message = $"⚠️ Scene {i + 1} clip failed or empty, skipping",
+                        Stage           = "Video Composer",
+                        Message         = $"⚠️ Scene {i + 1} clip empty/failed, skipping",
                         ProgressPercent = pct,
-                        Status  = VideoGenerationStatus.ComposingVideo
+                        Status          = VideoGenerationStatus.ComposingVideo
                     });
             }
 
             if (!sceneClips.Any())
                 throw new InvalidOperationException(
-                    "No scene clips were created. Check FFmpeg path and image/audio files.");
+                    "No scene clips were created. Check FFmpeg path and scene image/audio files.");
 
             progress?.Report(new VideoProgressUpdate
             {
@@ -159,18 +185,18 @@ public class VideoComposerAgent : IVideoComposerAgent
 
             await ConcatenateClipsAsync(sceneClips, outputPath, subtitleFile?.FilePath);
 
-            // Verify output file has actual content
             var fileInfo = new FileInfo(outputPath);
             if (!fileInfo.Exists || fileInfo.Length < 1024)
                 throw new InvalidOperationException(
-                    $"Output video is empty or too small ({fileInfo.Length} bytes). " +
-                    "FFmpeg may have failed silently — check that all scene images exist.");
+                    $"Output video is empty ({fileInfo.Length} bytes). " +
+                    "FFmpeg may have encountered an error — check the console logs.");
 
             // Generate thumbnail
-            var thumbnailPath = Path.Combine(outputDir, "thumbnail.jpg");
-            await GenerateThumbnailAsync(outputPath, thumbnailPath);
+            var thumbPath = Path.Combine(outputDir, "thumbnail.jpg");
+            await GenerateThumbnailAsync(outputPath, thumbPath);
 
-            var mediaInfo = await FFProbe.AnalyseAsync(outputPath);
+            // Get duration via ffprobe
+            var duration = await GetVideoDurationAsync(outputPath);
 
             CleanupTemp(tempDir);
 
@@ -180,19 +206,19 @@ public class VideoComposerAgent : IVideoComposerAgent
                 FilePath        = outputPath,
                 FileName        = Path.GetFileName(outputPath),
                 FileSizeBytes   = fileInfo.Length,
-                DurationSeconds = mediaInfo.Duration.TotalSeconds,
+                DurationSeconds = duration,
                 Resolution      = $"{width}x{height}",
                 SceneCount      = storyboard.Scenes.Count,
                 HasSubtitles    = subtitleFile != null,
                 SubtitlePath    = subtitleFile?.FilePath,
-                ThumbnailPath   = File.Exists(thumbnailPath) ? thumbnailPath : null,
+                ThumbnailPath   = File.Exists(thumbPath) ? thumbPath : null,
                 Status          = VideoGenerationStatus.Completed
             };
 
             progress?.Report(new VideoProgressUpdate
             {
                 Stage           = "Video Composer",
-                Message         = $"✅ Video ready! {FormatSize(fileInfo.Length)}, {mediaInfo.Duration:mm\\:ss}",
+                Message         = $"✅ Video ready! {FormatSize(fileInfo.Length)}, {TimeSpan.FromSeconds(duration):mm\\:ss}",
                 ProgressPercent = 100,
                 Status          = VideoGenerationStatus.Completed
             });
@@ -211,37 +237,40 @@ public class VideoComposerAgent : IVideoComposerAgent
         }
     }
 
-    // ── Fix: Verify FFmpeg binary exists and is executable ────────────────────
-    private static async Task<bool> IsFFmpegAvailableAsync()
+    // ── Check ffmpeg works using FULL PATH ────────────────────────────────────
+    private async Task<(bool ok, string version)> CheckFFmpegAsync()
     {
         try
         {
-            var tcs  = new TaskCompletionSource<bool>();
-            var proc = new System.Diagnostics.Process
+            var output = new StringBuilder();
+            var proc   = new System.Diagnostics.Process
             {
                 StartInfo = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName               = "ffmpeg",
+                    FileName               = _ffmpegExe,   // FULL PATH — not just "ffmpeg"
                     Arguments              = "-version",
                     RedirectStandardOutput = true,
                     RedirectStandardError  = true,
                     UseShellExecute        = false,
                     CreateNoWindow         = true
-                },
-                EnableRaisingEvents = true
+                }
             };
-            proc.Exited += (_, _) => tcs.TrySetResult(proc.ExitCode == 0);
+            proc.OutputDataReceived += (_, e) => { if (e.Data != null) output.AppendLine(e.Data); };
+            proc.ErrorDataReceived  += (_, e) => { if (e.Data != null) output.AppendLine(e.Data); };
             proc.Start();
-            await Task.WhenAny(tcs.Task, Task.Delay(5000));
-            return proc.HasExited && proc.ExitCode == 0;
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+            await proc.WaitForExitAsync();
+            var firstLine = output.ToString().Split('\n').FirstOrDefault() ?? "";
+            return (proc.ExitCode == 0, firstLine.Trim());
         }
-        catch
+        catch (Exception ex)
         {
-            return false;
+            return (false, ex.Message);
         }
     }
 
-    private static async Task<bool> ComposeSceneClipAsync(
+    private async Task<bool> ComposeSceneClipAsync(
         StoryboardScene scene,
         AudioSegment? segment,
         string outputPath,
@@ -262,26 +291,21 @@ public class VideoComposerAgent : IVideoComposerAgent
 
             var args = new StringBuilder();
 
-            // Input: image or colour background
             if (hasImage)
                 args.Append($"-loop 1 -framerate 30 -t {duration:F3} -i \"{imagePath}\" ");
             else
-                args.Append($"-f lavfi -t {duration:F3} " +
-                            $"-i \"color=c=0x1a1a2e:size={width}x{height}:rate=30\" ");
+                args.Append($"-f lavfi -t {duration:F3} -i \"color=c=0x1a1a2e:size={width}x{height}:rate=30\" ");
 
-            // Input: audio or silence
             if (hasAudio)
                 args.Append($"-i \"{audioPath}\" ");
             else
                 args.Append($"-f lavfi -t {duration:F3} -i \"anullsrc=r=44100:cl=mono\" ");
 
-            // Scale + pad to exact resolution
             var scaleFilter =
                 $"scale={width}:{height}:force_original_aspect_ratio=decrease," +
                 $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black," +
                 $"setsar=1,format=yuv420p";
 
-            // Fade in/out
             var fadeFilter = scene.TransitionType == "fade"
                 ? $",fade=t=in:st=0:d=0.4,fade=t=out:st={Math.Max(0, duration - 0.4):F2}:d=0.4"
                 : "";
@@ -290,20 +314,20 @@ public class VideoComposerAgent : IVideoComposerAgent
             args.Append("-c:v libx264 -preset fast -crf 23 ");
             args.Append("-c:a aac -b:a 128k -ar 44100 ");
             args.Append($"-t {duration:F3} ");
-            args.Append("-map 0:v:0 -map 1:a:0 ");
-            args.Append("-shortest ");
+            args.Append("-map 0:v:0 -map 1:a:0 -shortest ");
             args.Append($"-y \"{outputPath}\"");
 
             await RunFFmpegAsync(args.ToString());
             return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0;
         }
-        catch
+        catch (Exception ex)
         {
+            Console.WriteLine($"[VideoComposer] Scene clip failed: {ex.Message}");
             return false;
         }
     }
 
-    private static async Task ConcatenateClipsAsync(
+    private async Task ConcatenateClipsAsync(
         List<string> clips,
         string outputPath,
         string? subtitlePath)
@@ -318,13 +342,9 @@ public class VideoComposerAgent : IVideoComposerAgent
         args.Append("-c:a aac -b:a 128k -ar 44100 ");
         args.Append("-movflags +faststart ");
 
-        // Burn-in subtitles if available
         if (!string.IsNullOrEmpty(subtitlePath) && File.Exists(subtitlePath))
         {
-            // Escape Windows path for FFmpeg subtitle filter
-            var escapedSub = subtitlePath
-                .Replace("\\", "/")
-                .Replace(":", "\\:");
+            var escapedSub = subtitlePath.Replace("\\", "/").Replace(":", "\\:");
             args.Append($"-vf \"subtitles='{escapedSub}':force_style=" +
                         "'FontSize=20,FontName=Arial,PrimaryColour=&Hffffff," +
                         "OutlineColour=&H000000,Outline=2,Shadow=1'\" ");
@@ -333,11 +353,10 @@ public class VideoComposerAgent : IVideoComposerAgent
         args.Append($"-y \"{outputPath}\"");
 
         await RunFFmpegAsync(args.ToString());
-
         try { File.Delete(concatFile); } catch { }
     }
 
-    private static async Task GenerateThumbnailAsync(string videoPath, string thumbPath)
+    private async Task GenerateThumbnailAsync(string videoPath, string thumbPath)
     {
         try
         {
@@ -346,17 +365,52 @@ public class VideoComposerAgent : IVideoComposerAgent
                        $"-y \"{thumbPath}\"";
             await RunFFmpegAsync(args);
         }
-        catch { /* thumbnail optional */ }
+        catch { /* thumbnail is optional */ }
     }
 
-    private static async Task RunFFmpegAsync(string args)
+    private async Task<double> GetVideoDurationAsync(string videoPath)
     {
-        var tcs  = new TaskCompletionSource<bool>();
-        var proc = new System.Diagnostics.Process
+        try
+        {
+            // Use ffprobe with full path
+            var args = $"-v error -show_entries format=duration " +
+                       $"-of default=noprint_wrappers=1:nokey=1 \"{videoPath}\"";
+
+            var output = new StringBuilder();
+            var proc   = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName               = _ffprobeExe,  // FULL PATH
+                    Arguments              = args,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true
+                }
+            };
+            proc.OutputDataReceived += (_, e) => { if (e.Data != null) output.AppendLine(e.Data); };
+            proc.Start();
+            proc.BeginOutputReadLine();
+            await proc.WaitForExitAsync();
+
+            if (double.TryParse(output.ToString().Trim(), out var d)) return d;
+        }
+        catch { }
+
+        // Fallback: estimate from file size
+        return 0;
+    }
+
+    // ── Run ffmpeg using FULL PATH ─────────────────────────────────────────────
+    private async Task RunFFmpegAsync(string args)
+    {
+        var errorOutput = new StringBuilder();
+        var proc        = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
-                FileName               = "ffmpeg",
+                FileName               = _ffmpegExe,   // FULL PATH — key fix
                 Arguments              = args,
                 RedirectStandardError  = true,
                 RedirectStandardOutput = true,
@@ -366,14 +420,13 @@ public class VideoComposerAgent : IVideoComposerAgent
             EnableRaisingEvents = true
         };
 
-        var errorOutput = new StringBuilder();
-        proc.ErrorDataReceived  += (_, e) => { if (e.Data != null) errorOutput.AppendLine(e.Data); };
-
+        var tcs = new TaskCompletionSource<bool>();
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) errorOutput.AppendLine(e.Data); };
         proc.Exited += (_, _) =>
         {
             if (proc.ExitCode != 0)
                 tcs.TrySetException(new Exception(
-                    $"FFmpeg exited with code {proc.ExitCode}: {errorOutput}"));
+                    $"FFmpeg failed (exit {proc.ExitCode}):\n{errorOutput}"));
             else
                 tcs.TrySetResult(true);
         };
@@ -381,17 +434,16 @@ public class VideoComposerAgent : IVideoComposerAgent
         proc.Start();
         proc.BeginErrorReadLine();
 
-        // Timeout: 10 minutes per operation
         var timeout = Task.Delay(TimeSpan.FromMinutes(10));
         var done    = await Task.WhenAny(tcs.Task, timeout);
 
         if (done == timeout)
         {
             try { proc.Kill(); } catch { }
-            throw new TimeoutException("FFmpeg operation timed out after 10 minutes.");
+            throw new TimeoutException("FFmpeg timed out after 10 minutes.");
         }
 
-        await tcs.Task; // rethrow any exception
+        await tcs.Task;
     }
 
     private static void CleanupTemp(string dir)
@@ -401,9 +453,10 @@ public class VideoComposerAgent : IVideoComposerAgent
 
     private static string SanitizeFileName(string name)
     {
+        if (string.IsNullOrWhiteSpace(name)) return "video";
         var invalid = Path.GetInvalidFileNameChars();
-        return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray())
-                   .Replace(' ', '_')[..Math.Min(name.Length, 80)];
+        var sanitized = new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Replace(' ', '_');
+        return sanitized.Length <= 80 ? sanitized : sanitized[..80];
     }
 
     private static string FormatSize(long bytes) => bytes switch

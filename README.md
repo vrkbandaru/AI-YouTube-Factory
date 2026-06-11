@@ -13,7 +13,7 @@
 └──────────────────────┬──────────────────────────────────────────┘
                        │ HTTP + SignalR (WebSocket)
 ┌──────────────────────▼──────────────────────────────────────────┐
-│                    .NET 10 Web API                               │
+│                    .NET 9 Web API                               │
 │                                                                  │
 │  ┌──────────┐  ┌────────────────────────────────────────────┐   │
 │  │ Document │  │           Content Orchestrator              │   │
@@ -69,7 +69,7 @@ ai-youtube-factory/
 ## ⚡ Quick Start
 
 ### Prerequisites
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [.NET 9 SDK](https://dotnet.microsoft.com/download)
 - [Node.js 20+](https://nodejs.org/)
 - [Angular CLI](https://angular.io/cli): `npm install -g @angular/cli`
 - Azure OpenAI resource with a `gpt-4o` deployment
@@ -298,7 +298,7 @@ Push to `main` → pipeline builds, tests, and deploys automatically.
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | .NET 10, ASP.NET Core |
+| Backend | .NET 9, ASP.NET Core |
 | AI Orchestration | Microsoft Semantic Kernel 1.21 |
 | LLM | Azure OpenAI GPT-4o |
 | Real-time | SignalR (WebSockets) |
